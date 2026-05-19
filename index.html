@@ -217,7 +217,7 @@
         </div>
 
         <div class="form-group">
-            <label><span class="material-icons" style="font-size:18px;">attach_money</span> Valor (R$)</label>
+            <label><span class="material-icons" style="font-size:18px;">attach_money</span> Valor Total (R$)</label>
             <input type="text" id="valor" placeholder="R$ 0,00" oninput="mascaraMoeda(this)" required>
         </div>
         
@@ -253,11 +253,11 @@
             <input type="date" id="data" required>
         </div>
 
-        <div class="form-group recorrente-box" id="box-recorrente">
-            <input type="checkbox" id="recorrente" onchange="toggleMeses(this)">
-            <label for="recorrente" style="margin:0; flex:1; color: var(--text-main);">Repetir lançamento por</label>
-            <input type="number" id="recorrente-meses" value="2" min="2" max="24" disabled>
-            <span style="font-size: 14px; color: var(--text-muted);">meses</span>
+        <div class="form-group recorrente-box" id="box-parcelas">
+            <input type="checkbox" id="parcelar" onchange="toggleParcelas(this)">
+            <label for="parcelar" style="margin:0; flex:1; color: var(--text-main);">Parcelar em</label>
+            <input type="number" id="num-parcelas" value="1" min="1" max="60" disabled>
+            <span style="font-size: 14px; color: var(--text-muted);">vezes</span>
         </div>
 
         <button class="btn-submit" onclick="salvarTransacao()" id="btn-salvar"><span class="material-icons">check_circle</span> Registrar</button>
@@ -382,7 +382,7 @@
 
     // --- MÁSCARA DE MOEDA ---
     function mascaraMoeda(input) {
-        let valorNum = input.value.replace(/\D/g, ''); // Remove tudo que não for número
+        let valorNum = input.value.replace(/\D/g, ''); 
         if (valorNum === '') { input.value = ''; return; }
         
         valorNum = (parseInt(valorNum) / 100).toFixed(2);
@@ -419,53 +419,69 @@
         }
     });
 
-    function toggleMeses(chk) { document.getElementById('recorrente-meses').disabled = !chk.checked; }
+    function toggleParcelas(chk) { document.getElementById('num-parcelas').disabled = !chk.checked; }
+    
     function toggleTheme() {
         config.darkMode = document.getElementById('dark-mode').checked;
         document.documentElement.setAttribute('data-theme', config.darkMode ? 'dark' : 'light');
         salvarConfig();
         atualizarDashboard();
     }
+    
     function salvarMeta() { config.metaMensal = parseFloat(document.getElementById('input-meta').value) || 0; salvarConfig(); atualizarDashboard(); }
     function salvarConfig() { localStorage.setItem('gastos_config', JSON.stringify(config)); }
 
-    // --- SALVAR TRANSAÇÃO ---
+    // --- SALVAR TRANSAÇÃO (COM PARCELAMENTO) ---
     function salvarTransacao() {
         const idEdit = document.getElementById('edit-id').value;
         const tipo = document.querySelector('input[name="tipo"]:checked').value;
         const valorInput = document.getElementById('valor').value;
-        const valor = converterMoedaParaFloat(valorInput);
+        const valorTotal = converterMoedaParaFloat(valorInput);
         
         const categoria = document.getElementById('categoria').value;
         const formaPagamento = document.getElementById('forma-pagamento').value;
         const dataStr = document.getElementById('data').value;
-        const recorrente = document.getElementById('recorrente').checked;
-        const meses = parseInt(document.getElementById('recorrente-meses').value) || 2;
+        
+        // Lógica do parcelamento
+        const isParcelado = document.getElementById('parcelar').checked;
+        const numParcelas = isParcelado ? (parseInt(document.getElementById('num-parcelas').value) || 1) : 1;
+        const valorParcela = valorTotal / numParcelas;
 
-        if (!valor || !dataStr) {
+        if (!valorTotal || !dataStr) {
             return mostrarModal("Erro", "Preencha o valor e a data corretamente!", null, true);
         }
 
         if (idEdit) {
             const index = transacoes.findIndex(t => t.id == idEdit);
-            transacoes[index] = { id: parseInt(idEdit), tipo, valor, categoria, formaPagamento, data: dataStr };
+            transacoes[index] = { id: parseInt(idEdit), tipo, valor: valorTotal, categoria, formaPagamento, data: dataStr };
             cancelarEdicao();
         } else {
             const baseDate = new Date(dataStr + 'T12:00:00');
-            const iteracoes = recorrente ? meses : 1;
 
-            for(let i = 0; i < iteracoes; i++) {
+            for(let i = 0; i < numParcelas; i++) {
                 let novaData = new Date(baseDate);
                 novaData.setMonth(baseDate.getMonth() + i);
+                
+                // Formata o nome para ficar tipo: "Netflix (1/3)" se for parcelado
+                let nomeCategoria = (isParcelado && numParcelas > 1) ? `${categoria} (${i+1}/${numParcelas})` : categoria;
+
                 transacoes.push({
                     id: Date.now() + i,
-                    tipo, valor, categoria, formaPagamento,
+                    tipo, 
+                    valor: valorParcela, 
+                    categoria: nomeCategoria, 
+                    formaPagamento,
                     data: `${novaData.getFullYear()}-${String(novaData.getMonth()+1).padStart(2,'0')}-${String(novaData.getDate()).padStart(2,'0')}`
                 });
             }
         }
 
+        // Reseta o formulário
         document.getElementById('valor').value = '';
+        document.getElementById('parcelar').checked = false;
+        document.getElementById('num-parcelas').disabled = true;
+        document.getElementById('num-parcelas').value = '1';
+        
         localStorage.setItem('gastos_app_pro', JSON.stringify(transacoes));
         mudarTela('view-dashboard', document.querySelectorAll('.nav-item')[0]);
     }
@@ -476,17 +492,16 @@
         document.getElementById('edit-id').value = t.id;
         document.querySelector(`input[name="tipo"][value="${t.tipo}"]`).checked = true;
         
-        // Aplica a máscara no input para edição
         const inputValor = document.getElementById('valor');
         inputValor.value = t.valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
         
-        document.getElementById('categoria').value = t.categoria;
+        document.getElementById('categoria').value = t.categoria.split(" (")[0]; // Limpa a parcela do nome para edição
         document.getElementById('forma-pagamento').value = t.formaPagamento || 'Pix';
         document.getElementById('data').value = t.data;
         document.getElementById('titulo-add').textContent = 'Editar Transação';
         document.getElementById('btn-salvar').innerHTML = '<span class="material-icons">save</span> Salvar Alteração';
         document.getElementById('btn-cancelar').style.display = 'flex';
-        document.getElementById('box-recorrente').style.display = 'none';
+        document.getElementById('box-parcelas').style.display = 'none'; // Esconde opções de parcelar na edição
         mudarTela('view-add', document.querySelectorAll('.nav-item')[1]);
     }
 
@@ -496,7 +511,7 @@
         document.getElementById('titulo-add').textContent = 'Nova Transação';
         document.getElementById('btn-salvar').innerHTML = '<span class="material-icons">check_circle</span> Registrar';
         document.getElementById('btn-cancelar').style.display = 'none';
-        document.getElementById('box-recorrente').style.display = 'flex';
+        document.getElementById('box-parcelas').style.display = 'flex';
         mudarTela('view-history', document.querySelectorAll('.nav-item')[2]);
     }
 
